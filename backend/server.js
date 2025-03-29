@@ -39,6 +39,30 @@ app.post('/api/generate-response', async (req, res) => {
   }
 });
 
+// Endpoint to generate a response from a specific bot
+app.post('/api/generate-bot-response', async (req, res) => {
+  try {
+    const { userMessage, botId } = req.body;
+    
+    if (!botId) {
+      return res.status(400).json({
+        error: 'Missing botId parameter'
+      });
+    }
+    
+    const response = await aiService.generateBotResponse(userMessage, botId);
+    botResponses.push(response);
+    
+    res.json(response);
+  } catch (error) {
+    console.error('AI Service Error:', error);
+    res.status(500).json({
+      error: 'Failed to generate bot response',
+      details: error.message
+    });
+  }
+});
+
 // Endpoint to get chat history
 app.get('/api/conversation-history', (req, res) => {
   try {

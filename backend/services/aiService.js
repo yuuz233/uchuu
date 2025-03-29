@@ -192,4 +192,97 @@ const getConversationHistory = () => {
   return loadConversationHistory();
 };
 
-module.exports = { generateResponse, botPersonalities, getConversationHistory }; 
+// Generate a response from a specific bot by ID
+const generateBotResponse = async (userMessage, botId) => {
+  try {
+    console.log(`Generating response from bot ${botId} for: ${userMessage}`);
+    
+    // Find the bot with the specified ID
+    const bot = botPersonalities.find(b => b.id === botId);
+    if (!bot) {
+      throw new Error(`Bot with ID ${botId} not found`);
+    }
+    
+    // Load existing conversation history
+    const conversationHistory = loadConversationHistory();
+    
+    // Get bot's conversation history or initialize if new
+    if (!conversationHistory[botId]) {
+      conversationHistory[botId] = [];
+    }
+    
+    // Prepare conversation context for this bot
+    const botHistory = conversationHistory[botId];
+    const contextMessages = [
+      { role: "system", content: bot.prompt },
+    ];
+    
+    // Add recent conversation history (last 5 exchanges)
+    const recentHistory = botHistory.slice(-5);
+    recentHistory.forEach(exchange => {
+      contextMessages.push(
+        { role: "user", content: exchange.userMessage },
+        { role: "assistant", content: exchange.botResponse }
+      );
+    });
+    
+    // Add current user message
+    contextMessages.push({ role: "user", content: userMessage });
+    
+    // Generate response using the bot's personality and history
+    const completion = await openai.chat.completions.create({
+      messages: contextMessages,
+      model: "gpt-4o-mini",
+    });
+    
+    // Get bot response and enforce 280 character limit
+    let botResponse = completion.choices[0].message.content;
+    if (botResponse.length > 280) {
+      // Truncate to 280 chars and try to end at a sentence or word boundary
+      let truncated = botResponse.substring(0, 277);
+      const lastPeriod = truncated.lastIndexOf('.');
+      const lastQuestion = truncated.lastIndexOf('?');
+      const lastExclamation = truncated.lastIndexOf('!');
+      
+      // Find the last sentence ending (period, question mark, or exclamation point)
+      let lastEnd = Math.max(lastPeriod, lastQuestion, lastExclamation);
+      
+      // If no sentence ending found within range, try to end at a word boundary
+      if (lastEnd < 200) {
+        const lastSpace = truncated.lastIndexOf(' ');
+        if (lastSpace > truncated.length * 0.7) { // If space is in the latter part
+          truncated = truncated.substring(0, lastSpace);
+        }
+        truncated += '...';
+      } else {
+        // End at the sentence boundary and add one character to include the punctuation
+        truncated = truncated.substring(0, lastEnd + 1);
+      }
+      
+      botResponse = truncated;
+    }
+    
+    // Save this exchange to history
+    botHistory.push({
+      userMessage,
+      botResponse,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Save updated conversation history
+    saveConversationHistory(conversationHistory);
+    
+    return {
+      text: botResponse,
+      timestamp: new Date(),
+      botId: bot.id,
+      botName: bot.name,
+      color: bot.color
+    };
+  } catch (error) {
+    console.error('AI Generation Error:', error);
+    throw new Error(`OpenAI API Error: ${error.message}`);
+  }
+};
+
+module.exports = { generateResponse, botPersonalities, getConversationHistory, generateBotResponse }; 
