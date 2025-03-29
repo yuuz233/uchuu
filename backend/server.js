@@ -22,9 +22,14 @@ let botResponses = [];
 app.post('/api/generate-response', async (req, res) => {
   try {
     const { userMessage } = req.body;
-    const response = await aiService.generateResponse(userMessage);
-    botResponses.push(response);
-    res.json(response);
+    const responses = await aiService.generateResponse(userMessage);
+    
+    // Now responses is an array, store each response
+    responses.forEach(response => {
+      botResponses.push(response);
+    });
+    
+    res.json(responses);
   } catch (error) {
     console.error('AI Service Error:', error);
     res.status(500).json({
@@ -32,7 +37,34 @@ app.post('/api/generate-response', async (req, res) => {
       details: error.message
     });
   }
-}); 
+});
+
+// Endpoint to get chat history
+app.get('/api/conversation-history', (req, res) => {
+  try {
+    const history = aiService.getConversationHistory();
+    res.json(history);
+  } catch (error) {
+    console.error('History Retrieval Error:', error);
+    res.status(500).json({
+      error: 'Failed to retrieve conversation history',
+      details: error.message
+    });
+  }
+});
+
+// Endpoint to get bot personalities
+app.get('/api/bot-personalities', (req, res) => {
+  try {
+    res.json(aiService.botPersonalities);
+  } catch (error) {
+    console.error('Bot Personalities Error:', error);
+    res.status(500).json({
+      error: 'Failed to retrieve bot personalities',
+      details: error.message
+    });
+  }
+});
 
 // Server initialization
 const PORT = process.env.PORT || 3001;
