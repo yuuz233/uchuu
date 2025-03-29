@@ -5,6 +5,7 @@ export default function Home() {
   const [newPost, setNewPost] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [botPersonalities, setBotPersonalities] = useState([]);
+  const [expandedThreadId, setExpandedThreadId] = useState(null);
 
   // Load conversation history when page loads
   useEffect(() => {
@@ -28,8 +29,9 @@ export default function Home() {
         
         const history = await historyResponse.json();
         
-        // Process history to display in feed
-        const allPosts = [];
+        // Process history to organize in threads
+        const threads = [];
+        const threadMap = {};
         
         // For each bot in the history
         Object.keys(history).forEach(botId => {
@@ -37,27 +39,33 @@ export default function Home() {
           
           // For each conversation entry of this bot
           botHistory.forEach(entry => {
-            // Find if this user message is already in our posts
-            const userMessageIndex = allPosts.findIndex(
-              post => post.type === 'user' && post.text === entry.userMessage && 
-              new Date(post.timestamp).toISOString().split('T')[0] === new Date(entry.timestamp).toISOString().split('T')[0]
-            );
+            const userMessage = entry.userMessage;
+            const timestamp = new Date(entry.timestamp);
+            const dateStr = timestamp.toISOString().split('T')[0]; 
             
-            // If this user message doesn't exist yet, add it
-            if (userMessageIndex === -1) {
-              allPosts.push({
-                text: entry.userMessage,
-                type: 'user',
-                timestamp: new Date(entry.timestamp)
-              });
+            // Create a unique thread ID based on user message and date
+            const threadId = `${userMessage.substring(0, 20)}_${dateStr}`;
+            
+            // If this thread doesn't exist yet, create it
+            if (!threadMap[threadId]) {
+              const thread = {
+                id: threadId,
+                userMessage: {
+                  text: userMessage,
+                  timestamp: timestamp
+                },
+                responses: [],
+                timestamp: timestamp  // Thread timestamp is the user message timestamp
+              };
+              threads.push(thread);
+              threadMap[threadId] = thread;
             }
             
-            // Add the bot response
+            // Add bot response to thread
             const botInfo = personalities.find(bot => bot.id === botId) || {};
-            allPosts.push({
+            threadMap[threadId].responses.push({
               text: entry.botResponse,
-              type: 'bot',
-              timestamp: new Date(entry.timestamp),
+              timestamp: timestamp,
               botId: botId,
               botName: botInfo.name || 'Bot',
               color: botInfo.color || '#f0f0f0'
@@ -65,10 +73,15 @@ export default function Home() {
           });
         });
         
-        // Sort all posts by timestamp
-        allPosts.sort((a, b) => a.timestamp - b.timestamp);
+        // Sort threads by timestamp (newest first)
+        threads.sort((a, b) => b.timestamp - a.timestamp);
         
-        setPosts(allPosts);
+        // Sort responses within each thread
+        threads.forEach(thread => {
+          thread.responses.sort((a, b) => a.timestamp - b.timestamp);
+        });
+        
+        setPosts(threads);
         setIsLoading(false);
       } catch (error) {
         console.error('Error loading history:', error);
@@ -81,7 +94,27 @@ export default function Home() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!newPost.trim()) return;
+    
     try {
+      // Add the user's message first
+      const userTimestamp = new Date();
+      const threadId = `${newPost.substring(0, 20)}_${userTimestamp.toISOString().split('T')[0]}`;
+      
+      const newThread = {
+        id: threadId,
+        userMessage: {
+          text: newPost,
+          timestamp: userTimestamp
+        },
+        responses: [],
+        timestamp: userTimestamp
+      };
+      
+      // Insert at the beginning (newest first)
+      setPosts([newThread, ...posts]);
+      
+      // Get bot responses
       const response = await fetch('/api/generate-response', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -94,22 +127,26 @@ export default function Home() {
       
       const botResponses = await response.json();
       
-      // First add the user's message
-      const updatedPosts = [...posts, { 
-        text: newPost, 
-        type: 'user',
-        timestamp: new Date()
-      }];
-      
-      // Then add each bot response
-      botResponses.forEach(botResponse => {
-        updatedPosts.push({
-          ...botResponse,
-          type: 'bot'
-        });
+      // Update thread with bot responses
+      setPosts(prevPosts => {
+        const updatedPosts = [...prevPosts];
+        const threadIndex = updatedPosts.findIndex(t => t.id === threadId);
+        
+        if (threadIndex >= 0) {
+          botResponses.forEach(botResponse => {
+            updatedPosts[threadIndex].responses.push({
+              ...botResponse,
+              timestamp: new Date(botResponse.timestamp)
+            });
+          });
+          
+          // Auto-expand the new thread
+          setExpandedThreadId(threadId);
+        }
+        
+        return updatedPosts;
       });
       
-      setPosts(updatedPosts);
       setNewPost('');
     } catch (error) {
       console.error('Submission Error:', error);
@@ -117,9 +154,13 @@ export default function Home() {
     }
   };
 
+  const toggleThread = (threadId) => {
+    setExpandedThreadId(expandedThreadId === threadId ? null : threadId);
+  };
+
   return (
     <div className="container">
-      <h1>Mental Support Feed</h1>
+      <h1>MindSpace</h1>
       
       {isLoading ? (
         <div className="loading">Loading conversation history...</div>
@@ -129,21 +170,47 @@ export default function Home() {
             <textarea
               value={newPost}
               onChange={(e) => setNewPost(e.target.value)}
-              placeholder="How are you feeling today?"
+              placeholder="What's on your mind?"
             />
-            <button type="submit">Post</button>
+            <button type="submit">Tweet</button>
           </form>
+          
           <div className="feed">
-            {posts.map((post, index) => (
-              <div 
-                key={index} 
-                className={`post ${post.type}`}
-                style={post.type === 'bot' ? { backgroundColor: post.color || '#f0f0f0' } : {}}
-              >
-                {post.type === 'bot' && <div className="bot-name">{post.botName || 'Bot'}</div>}
-                <p>{post.text}</p>
-                {post.type === 'bot' && 
-                  <small>{new Date(post.timestamp).toLocaleTimeString()}</small>}
+            {posts.map((thread) => (
+              <div key={thread.id} className="thread">
+                <div 
+                  className="post user" 
+                  onClick={() => toggleThread(thread.id)}
+                >
+                  <p>{thread.userMessage.text}</p>
+                  <div className="post-meta">
+                    <small>{new Date(thread.userMessage.timestamp).toLocaleString()}</small>
+                    <div className="interactions">
+                      <span className="reply-count">{thread.responses.length} replies</span>
+                      {expandedThreadId !== thread.id ? (
+                        <span className="expand-icon">▼</span>
+                      ) : (
+                        <span className="expand-icon">▲</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                
+                {expandedThreadId === thread.id && (
+                  <div className="responses">
+                    {thread.responses.map((response, responseIndex) => (
+                      <div 
+                        key={responseIndex} 
+                        className="post bot"
+                        style={{ backgroundColor: response.color || '#f0f0f0' }}
+                      >
+                        <div className="bot-name">{response.botName || 'Bot'}</div>
+                        <p>{response.text}</p>
+                        <small>{new Date(response.timestamp).toLocaleTimeString()}</small>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -152,15 +219,18 @@ export default function Home() {
       
       <style jsx>{`
         .container {
-          max-width: 800px;
+          max-width: 600px;
           margin: 0 auto;
           padding: 20px;
-          font-family: Arial, sans-serif;
+          font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", sans-serif;
+          background-color: #f7f9f9;
+          min-height: 100vh;
         }
         
         h1 {
           text-align: center;
           margin-bottom: 20px;
+          color: #1da1f2;
         }
         
         .loading {
@@ -174,23 +244,42 @@ export default function Home() {
           display: flex;
           flex-direction: column;
           margin-bottom: 20px;
+          background-color: white;
+          padding: 15px;
+          border-radius: 15px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
         
         textarea {
           padding: 10px;
           margin-bottom: 10px;
           min-height: 80px;
-          border-radius: 5px;
-          border: 1px solid #ddd;
+          border-radius: 15px;
+          border: 1px solid #e1e8ed;
+          font-size: 16px;
+          resize: none;
+          font-family: inherit;
+        }
+        
+        textarea:focus {
+          outline: none;
+          border-color: #1da1f2;
         }
         
         button {
-          padding: 10px;
-          background-color: #4CAF50;
+          padding: 10px 15px;
+          background-color: #1da1f2;
           color: white;
           border: none;
-          border-radius: 5px;
+          border-radius: 30px;
           cursor: pointer;
+          font-weight: bold;
+          align-self: flex-end;
+          transition: background-color 0.2s;
+        }
+        
+        button:hover {
+          background-color: #0c8bd0;
         }
         
         .feed {
@@ -198,35 +287,97 @@ export default function Home() {
           flex-direction: column;
         }
         
+        .thread {
+          margin-bottom: 20px;
+          border-radius: 15px;
+          overflow: hidden;
+          background-color: white;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
         .post {
           padding: 15px;
-          margin-bottom: 15px;
-          border-radius: 10px;
+          border-bottom: 1px solid #e1e8ed;
+        }
+        
+        .post:last-child {
+          border-bottom: none;
         }
         
         .post.user {
-          align-self: flex-end;
-          background-color: #DCF8C6;
-          max-width: 70%;
+          cursor: pointer;
+          transition: background-color 0.2s;
         }
         
-        .post.bot {
-          align-self: flex-start;
-          max-width: 70%;
-          position: relative;
+        .post.user:hover {
+          background-color: #f5f8fa;
+        }
+        
+        .post p {
+          margin: 0 0 10px 0;
+          font-size: 15px;
+          line-height: 1.4;
+        }
+        
+        .post-meta {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          color: #657786;
+          font-size: 13px;
+        }
+        
+        .interactions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        
+        .reply-count {
+          color: #1da1f2;
+          font-weight: 500;
+        }
+        
+        .expand-icon {
+          font-size: 10px;
+          color: #1da1f2;
         }
         
         .bot-name {
           font-weight: bold;
           margin-bottom: 5px;
+          color: #14171a;
+          display: flex;
+          align-items: center;
+        }
+        
+        .bot-name::before {
+          content: "";
+          display: inline-block;
+          width: 15px;
+          height: 15px;
+          background-color: currentColor;
+          border-radius: 50%;
+          margin-right: 5px;
+          opacity: 0.5;
+        }
+        
+        .responses {
+          background-color: #f5f8fa;
+          border-top: 1px solid #e1e8ed;
+        }
+        
+        .post.bot {
+          margin: 0;
+          border-radius: 0;
+          border-bottom: 1px solid rgba(0,0,0,0.05);
+          padding: 12px 15px;
         }
         
         small {
           display: block;
-          text-align: right;
           font-size: 0.8em;
-          margin-top: 5px;
-          color: #777;
+          color: #657786;
         }
       `}</style>
     </div>
